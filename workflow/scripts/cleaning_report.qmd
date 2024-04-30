@@ -1,0 +1,215 @@
+---
+format:
+  html:
+    css: styles.css
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+params:
+  provider: provider1
+  input: global_summary.csv
+---
+
+# Data cleaning report for `r toupper(params$provider)`
+
+This report provides an overview of the total number of records per variable. In the following, a record is considered **valid** if it meets the following requirements:
+
+-   Patient ID provided
+
+-   Stay ID provided
+
+-   Correctly formatted datetime provided (if applicable)
+
+-   Correct data type
+
+-   Correct unit(s)
+
+The expected data type and units are defined for each variable in the metadata file (meta.json).
+
+A record is considered **invalid** if it fails one or more of these checks.
+
+```{r}
+#| label: load-packages
+suppressPackageStartupMessages(library("plotly"))
+library("DT")
+library("ggplot2")
+suppressPackageStartupMessages(library("dplyr"))
+library("tidyr")
+library("knitr")
+```
+
+```{r}
+#| label: import-data
+data <- read.csv(params$input)
+
+data <- data %>%
+  dplyr::mutate_all(~ replace(., is.na(.), 0))
+
+data <- data %>%
+  dplyr::mutate(total_records = valid_records + invalid_records)
+
+invalid <- data %>%
+  dplyr::filter(invalid_records > 0)
+```
+
+------------------------------------------------------------------------
+
+## Records per variable
+
+@tbl-records-per-variable shows the number of variables with and without records.
+
+```{r}
+#| label: tbl-records-per-variable
+#| tbl-cap: Records per variable
+
+summed_counts <- data.frame(
+  Category = c("Total variables with at least 1 valid record",
+                      "Total variables with only invalid records",
+                      "Total variables with no records",
+                      "Total variables"),
+  Count = c(
+    sum(data$valid_records > 0),
+    sum(data$valid_records == 0 & data$invalid_records > 0),
+    sum(data$total_records == 0),
+    nrow(data)
+  )
+)
+summed_counts %>%
+ kable()
+
+
+```
+
+------------------------------------------------------------------------
+
+@tbl-variables-per-concept shows the number of variables per concept (in total) and the number of variables without any valid records.
+
+```{r}
+#| label: tbl-variables-per-concept
+#| tbl-cap: Number of variables per concept
+
+data %>%
+  group_by(concept_name) %>%
+  summarize(
+    `Total number of variables` = n(),
+    `Total number of variables with no valid records` = sum(valid_records == 0)
+  ) %>%
+  DT::datatable(filter = "top")
+
+```
+
+------------------------------------------------------------------------
+
+@tbl-no-records lists all variables that do not have any records
+
+```{r}
+#| label: tbl-no-records
+#| tbl-cap: Variables without records
+
+data %>%
+  dplyr::filter(total_records == 0) %>%
+  dplyr::select(concept_name, variable_name, description) %>%
+  datatable(filter = "top")
+```
+
+------------------------------------------------------------------------
+
+@tbl-no-valid-records lists all variables that have only invalid records
+
+```{r}
+#| label: tbl-no-valid-records
+#| tbl-cap: Variables with invalid records only
+
+data %>%
+  dplyr::filter(valid_records == 0, invalid_records > 0) %>%
+  dplyr::select(concept_name, variable_name, description) %>%
+  datatable(filter = "top")
+```
+
+------------------------------------------------------------------------
+
+## In-/valid records per variable
+
+@fig-valid-records shows the number of **valid** records for all variables that have at least one valid record. You can hover over the orange point to see the exact number of records on a linear scale.
+
+```{r out.width = "100%", fig.height=(data %>% dplyr::filter(valid_records > 0) %>% nrow()*0.1)}
+#| label: fig-valid-records
+#| fig-cap: Number of valid records per variable
+
+data %>% 
+  dplyr::filter(valid_records > 0) %>% 
+  dplyr::mutate(variable = paste(concept_name, variable_name, sep = ".")) %>% 
+  dplyr::arrange(desc(variable)) %>% 
+  plot_ly(
+        y = ~variable,
+        x = ~log10(valid_records), 
+        type = "bar",
+        hoverinfo = "none"
+        ) %>% 
+  add_markers(text = ~ format(valid_records, big.mark = "'"), hoverinfo = "text", showlegend = FALSE) %>% 
+  layout(yaxis = list(tickmode = 'array', tickvals = ~variable, ticktext = ~variable, tickfont = list(size =6)))
+
+```
+
+------------------------------------------------------------------------
+
+@fig-invalid-records shows the number of **invalid** records for all variables that have at least one invalid record.
+
+You can hover over the orange point to display a summary of the issues associated with the invalid records. Please be aware that a record may appear multiple times in this display if it is associated with multiple issues, such as a missing datetime and an invalid unit.
+
+```{r out.width = "100%", fig.height=(data %>% dplyr::filter(invalid_records > 0) %>% nrow()*0.1)}
+#| label: fig-invalid-records
+#| fig-cap: Number of invalid records per variable
+
+invalid %>% 
+  dplyr::mutate(variable = paste(concept_name, variable_name, sep = ".")) %>% 
+  dplyr::arrange(desc(variable)) %>% 
+  plot_ly(
+        y = ~variable,
+        x = ~log10(invalid_records), 
+        type = "bar",
+        hoverinfo = "none"
+        ) %>% 
+  add_markers(text = ~ paste("<b>Patient ID:</b> ", missing_patient_id, "<br />", 
+                             "<b>Stay ID:</b> ", missing_stay_id, "<br />",
+                             "<b>Datetime:</b> ", total_datetime_issues, "<br />",
+                             "<b>Datatype:</b> ", total_data_type_issues, "<br />",
+                             "<b>Unit:</b> ", total_unit_issues, "<br />"
+                             ),
+              hoverinfo = "text", showlegend = FALSE) %>% 
+  layout(yaxis = list(tickmode = 'array', tickvals = ~variable, ticktext = ~variable, tickfont = list(size =6)))
+```
+
+------------------------------------------------------------------------
+
+@tbl-invalid-records shows issues found in variables with at least one invalid entry. Each variable is covered with 14 fields, all displayed together on one page. For problems related to datetime, data type, or unit, we provide a breakdown, including the total number of issues (**in bold**) and whether they are due to missing values or formatting errors. Shading is used to group related fields.
+
+Additionally, a file containing all invalid entries is available at `results/<release>/<provider>/clean_data/issues/<concept>.<variable>.issues.csv`. This file allows for a closer examination of specific issues.
+
+```{r}
+#| label: tbl-invalid-records
+#| tbl-cap: Issues detected for variables with invalid records
+invalid %>%
+  dplyr::select(-description,
+                -valid_records) %>%
+  dplyr::mutate(dplyr::across(everything(), as.character)) %>% 
+  tidyr::pivot_longer(
+    cols = c(invalid_records:total_unit_issues),
+    names_to = "issue_type",
+    values_to = "counts",
+    values_transform = list(val = as.character)
+  ) %>% 
+  datatable(filter = "top",
+            options = list(pageLength = 14)
+            ) %>% 
+  formatStyle(
+    "issue_type",
+    fontWeight = styleEqual(c('invalid_records', 'total_datetime_issues', 'total_data_type_issues', 'total_unit_issues'), 'bold'),
+    target = 'row',
+    backgroundColor = styleEqual(
+      c('invalid_records', 'missing_datetimes', 'invalid_datetimes', 'total_datetime_issues', 'allowed_unit_list', 'incorrect_unit_list', 'missing_units', 'invalid_units', 'total_unit_issues'),
+      c('#F0E5C3', rep('#FFFDE5', 3), rep('#FFFDE5', 5))
+    )
+  )
+```

@@ -1,0 +1,19 @@
+inputOutput:
+  providers: ["my_hospital"]
+
+# The steps in this pipeline use a broad range of resources and have been assigned to the following three categories.
+# If there aren't enough resources specified it can be adapted in the tools corresponding section.
+computingResources:
+  mem_mb:
+    low: 2000
+    medium: 64000
+    high: 128000
+  hours:
+    low: 1
+    medium: 4
+    high: 24
+  threads:
+    low: 1
+    medium: 4
+    high: 16
+

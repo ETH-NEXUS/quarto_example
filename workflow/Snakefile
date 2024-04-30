@@ -1,0 +1,13 @@
+
+# Include and validate Config file
+configfile: "config/config.yaml"
+
+
+providers = config["inputOutput"]["providers"]
+
+rule all:
+    input:
+        expand("cleaning_reports/{provider}/cleaning_report.html", provider = providers)
+
+
+include: "rules/clean_data_report.smk"

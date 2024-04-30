@@ -1,0 +1,5 @@
+data
+singularity_cache
+example_results
+.snakemake
+.cache
